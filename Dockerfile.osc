@@ -1,0 +1,45 @@
+# Etherpad Lite Dockerfile for OSC deployment
+#
+# Listens on port specified by PORT environment variable (default: 9001)
+
+FROM node:lts-alpine AS build
+RUN npm install -g pnpm@latest
+WORKDIR /opt/etherpad-lite
+COPY . .
+RUN pnpm install
+RUN pnpm run build:ui
+
+FROM node:lts-alpine
+
+RUN npm install -g pnpm@latest && \
+    apk add --no-cache shadow bash curl git ca-certificates
+
+ARG EP_UID=5001
+ARG EP_GID=0
+
+RUN groupadd --system ${EP_GID:+--gid "${EP_GID}" --non-unique} etherpad && \
+    useradd --system ${EP_UID:+--uid "${EP_UID}" --non-unique} --gid etherpad \
+        --create-home etherpad
+
+WORKDIR /opt/etherpad-lite
+
+COPY --from=build --chown=etherpad:etherpad /opt/etherpad-lite .
+COPY --chown=etherpad:etherpad entrypoint.osc.sh /opt/etherpad-lite/
+
+RUN chmod +x /opt/etherpad-lite/entrypoint.osc.sh
+
+USER etherpad
+
+ENTRYPOINT ["/opt/etherpad-lite/entrypoint.osc.sh"]
+
+ENV NODE_ENV=production
+ENV ETHERPAD_PRODUCTION=true
+
+VOLUME /opt/etherpad-lite/var
+
+HEALTHCHECK --interval=5s --timeout=3s \
+  CMD curl --silent http://localhost:${PORT:-9001}/health | grep -E "pass|ok|up" > /dev/null || exit 1
+
+EXPOSE ${PORT:-9001}
+
+CMD ["pnpm", "run", "prod"]
